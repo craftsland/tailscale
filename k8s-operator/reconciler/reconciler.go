@@ -23,8 +23,8 @@ import (
 )
 
 const (
-	// FinalizerName is the common finalizer used across all Tailscale Kubernetes resources.
-	FinalizerName = "tailscale.com/finalizer"
+	// Finalizer is the common finalizer used across all Tailscale Kubernetes resources.
+	Finalizer = "tailscale.com/finalizer"
 
 	// LabelParentType identifies which Tailscale CRD kind owns a managed resource. Every resource that a Tailscale
 	// CRD reconciler creates should carry this label alongside LabelParentName.
@@ -39,18 +39,20 @@ const (
 	LabelParentNamespace = "tailscale.com/parent-resource-ns"
 )
 
-// SetFinalizer adds the finalizer to the resource if not already present.
-func SetFinalizer(obj client.Object) {
-	if idx := slices.Index(obj.GetFinalizers(), FinalizerName); idx >= 0 {
+// SetFinalizer adds name to obj's finalizers if not already present. Most CRD reconcilers pass Finalizer; per-
+// reconciler names are used when a single resource may carry finalizers from multiple reconcilers that each need to run
+// their own cleanup.
+func SetFinalizer(obj client.Object, name string) {
+	if idx := slices.Index(obj.GetFinalizers(), name); idx >= 0 {
 		return
 	}
 
-	obj.SetFinalizers(append(obj.GetFinalizers(), FinalizerName))
+	obj.SetFinalizers(append(obj.GetFinalizers(), name))
 }
 
-// RemoveFinalizer removes the finalizer from the resource if present.
-func RemoveFinalizer(obj client.Object) {
-	idx := slices.Index(obj.GetFinalizers(), FinalizerName)
+// RemoveFinalizer removes name from obj's finalizers if present.
+func RemoveFinalizer(obj client.Object, name string) {
+	idx := slices.Index(obj.GetFinalizers(), name)
 	if idx < 0 {
 		return
 	}
@@ -59,25 +61,26 @@ func RemoveFinalizer(obj client.Object) {
 	obj.SetFinalizers(append(finalizers[:idx], finalizers[idx+1:]...))
 }
 
-// EnsureFinalizer adds FinalizerName to obj (if not already present) and persists the change via cl.Update. It is a
-// no-op when the finalizer is already set. Callers should invoke it early in a create/update reconcile so cleanup logic
-// gets a chance to run before the resource is garbage collected.
-func EnsureFinalizer(ctx context.Context, cl client.Client, obj client.Object) error {
-	if slices.Contains(obj.GetFinalizers(), FinalizerName) {
+// EnsureFinalizer adds name to obj (if not already present) and persists the change via cl.Update. It is a no-op when
+// the finalizer is already set. Callers should invoke it early in a create/update reconcile so cleanup logic gets a
+// chance to run before the resource is garbage collected. Most callers pass Finalizer; per-reconciler names are
+// used when a single resource may carry finalizers from multiple reconcilers.
+func EnsureFinalizer(ctx context.Context, cl client.Client, obj client.Object, name string) error {
+	if slices.Contains(obj.GetFinalizers(), name) {
 		return nil
 	}
-	SetFinalizer(obj)
+	SetFinalizer(obj, name)
 	return cl.Update(ctx, obj)
 }
 
-// ClearFinalizer removes FinalizerName from obj (if present) and persists the change via cl.Update. It is a no-op  when
-// the finalizer is already absent. Callers should invoke it at the end of delete handling, once all owned resources are
+// ClearFinalizer removes name from obj (if present) and persists the change via cl.Update. It is a no-op when the
+// finalizer is already absent. Callers should invoke it at the end of delete handling, once all owned resources are
 // gone, so the API server can garbage collect obj.
-func ClearFinalizer(ctx context.Context, cl client.Client, obj client.Object) error {
-	if !slices.Contains(obj.GetFinalizers(), FinalizerName) {
+func ClearFinalizer(ctx context.Context, cl client.Client, obj client.Object, name string) error {
+	if !slices.Contains(obj.GetFinalizers(), name) {
 		return nil
 	}
-	RemoveFinalizer(obj)
+	RemoveFinalizer(obj, name)
 	return cl.Update(ctx, obj)
 }
 
@@ -102,20 +105,47 @@ func Labels(parentType, parentName, parentNamespace string) map[string]string {
 // child resources so drift or cloud-controller updates propagate to the owning CRD's reconciler.
 func EnqueueForChild(parentType string) handler.MapFunc {
 	return func(_ context.Context, o client.Object) []reconcile.Request {
-		labels := o.GetLabels()
-		if labels[kubetypes.LabelManaged] != "true" || labels[LabelParentType] != parentType {
+		if !IsManagedByType(o, parentType) {
 			return nil
 		}
 
-		name := labels[LabelParentName]
-		if name == "" {
+		parent := ParentFromObjectLabels(o)
+		if parent.Name == "" {
 			return nil
 		}
 
-		return []reconcile.Request{{NamespacedName: types.NamespacedName{
-			Name:      name,
-			Namespace: labels[LabelParentNamespace],
-		}}}
+		return []reconcile.Request{{NamespacedName: parent}}
+	}
+}
+
+// IsManagedResource reports whether obj carries the tailscale.com/managed=true label — i.e. it is a child resource
+// stamped by a Tailscale CRD reconciler.
+func IsManagedResource(obj client.Object) bool {
+	return obj.GetLabels()[kubetypes.LabelManaged] == "true"
+}
+
+// IsManagedByType reports whether obj is a managed child resource whose LabelParentType matches parentType.
+func IsManagedByType(obj client.Object, parentType string) bool {
+	return IsManagedResource(obj) && obj.GetLabels()[LabelParentType] == parentType
+}
+
+// SelectorForType returns the label selector that matches every managed child resource with the given parent type.
+// Pass it to client.MatchingLabels when Listing children by type; it is the label-map counterpart of the IsManagedByType
+// predicate.
+func SelectorForType(parentType string) map[string]string {
+	return map[string]string{
+		kubetypes.LabelManaged: "true",
+		LabelParentType:        parentType,
+	}
+}
+
+// ParentFromObjectLabels returns the NamespacedName of the parent CRD encoded in obj's LabelParentName /
+// LabelParentNamespace labels. The Namespace is empty for children of cluster-scoped parents.
+func ParentFromObjectLabels(obj client.Object) types.NamespacedName {
+	labels := obj.GetLabels()
+	return types.NamespacedName{
+		Name:      labels[LabelParentName],
+		Namespace: labels[LabelParentNamespace],
 	}
 }
 
