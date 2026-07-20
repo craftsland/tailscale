@@ -23,11 +23,48 @@ var (
 	fakeFiles             = newVIP("files.tailscale", 6)      // serves binary files (tta, tailscale, tailscaled) to VMs
 	fakeACME              = newVIP("acme.example", 7)         // fake ACME CA for vmtests
 
+	// fakeSplitDNS is a second DNS server, distinct from fakeDNS, serving only
+	// splitDNSZone.
+	fakeSplitDNS = newVIP("split-dns", "4.11.4.12", "2411::412")
+
 	// FakeDualStackWeb is a dual-stack webserver VIP used by
 	// TestExitNodeV4Only to verify that traffic works through an
 	// IPv4-only exit node even when DNS returns both A and AAAA.
 	FakeDualStackWeb = newVIP("dualstack-web.example.com", "5.0.0.100", "2052::5:100")
 )
+
+// splitDNSDomain and splitDNSName describe the zone served *only* by
+// fakeSplitDNS, never by the default fakeDNS. An answer for splitDNSName
+// therefore proves a split-DNS route to fakeSplitDNS was honored. Names here
+// are in DNS wire format, as the query parser produces them: no trailing dot.
+const (
+	splitDNSDomain = "split-dns.example"
+	splitDNSName   = "internal." + splitDNSDomain
+)
+
+// splitDNSZone holds the names served only by fakeSplitDNS.
+var splitDNSZone = map[string]netip.Addr{
+	splitDNSName: netip.MustParseAddr("10.99.1.1"),
+}
+
+// SplitDNSDomain returns the DNS suffix served only by the fake split-DNS
+// server. Point a DNS route for this suffix at [FakeSplitDNSIPv4] to verify
+// split-DNS routing.
+func SplitDNSDomain() string { return splitDNSDomain }
+
+// SplitDNSName returns a name in [SplitDNSDomain] served only by the fake
+// split-DNS server, along with the address it resolves to.
+func SplitDNSName() (name string, addr netip.Addr) {
+	return splitDNSName, splitDNSZone[splitDNSName]
+}
+
+// FakeSplitDNSIPv4 returns the IPv4 address of the secondary (split-DNS) fake
+// DNS server. It answers only [SplitDNSName].
+func FakeSplitDNSIPv4() netip.Addr { return fakeSplitDNS.v4 }
+
+// FakeSplitDNSIPv6 returns the IPv6 address of the secondary (split-DNS) fake
+// DNS server.
+func FakeSplitDNSIPv6() netip.Addr { return fakeSplitDNS.v6 }
 
 type virtualIP struct {
 	name string // for DNS
