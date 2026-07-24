@@ -70,6 +70,7 @@ import (
 	"tailscale.com/paths"
 	"tailscale.com/syncs"
 	"tailscale.com/tailcfg"
+	"tailscale.com/tailcfg/nodecap"
 	"tailscale.com/tsd"
 	"tailscale.com/tstime"
 	"tailscale.com/types/appctype"
@@ -1527,7 +1528,7 @@ func (b *LocalBackend) updateStatusLocked(sb *ipnstate.StatusBuilder) {
 			if sn := nm.SelfNode; sn.Valid() {
 				peerStatusFromNode(ss, sn)
 				if cm := sn.CapMap(); cm.Len() > 0 {
-					ss.Capabilities = make([]tailcfg.NodeCapability, 1, cm.Len()+1)
+					ss.Capabilities = make([]nodecap.Cap, 1, cm.Len()+1)
 					ss.Capabilities[0] = "HTTPS://TAILSCALE.COM/s/DEPRECATED-NODE-CAPS#see-https://github.com/tailscale/tailscale/issues/11508"
 					ss.CapMap = make(tailcfg.NodeCapMap, sn.CapMap().Len())
 					for k, v := range cm.All() {
@@ -1983,7 +1984,7 @@ func (b *LocalBackend) setControlClientStatusLocked(c controlclient.Client, st c
 
 	// Perform all reconfiguration based on the netmap here.
 	if st.NetMap != nil {
-		b.capTailnetLock = st.NetMap.HasCap(tailcfg.CapabilityTailnetLock)
+		b.capTailnetLock = st.NetMap.HasCap(nodecap.TailnetLock)
 		b.setWebClientAtomicBoolLocked(st.NetMap.AllCaps)
 
 		b.mu.Unlock() // respect locking rules for tkaSyncIfNeeded
@@ -2015,7 +2016,7 @@ func (b *LocalBackend) setControlClientStatusLocked(c controlclient.Client, st c
 
 	// Now complete the lock-free parts of what we started while locked.
 	if st.NetMap != nil {
-		if envknob.NoLogsNoSupport() && st.NetMap.HasCap(tailcfg.CapabilityDataPlaneAuditLogs) {
+		if envknob.NoLogsNoSupport() && st.NetMap.HasCap(nodecap.DataPlaneAuditLogs) {
 			msg := "tailnet requires logging to be enabled. Remove --no-logs-no-support from tailscaled command line."
 			b.health.SetLocalLogConfigHealth(errors.New(msg))
 			// Get the current prefs again, since we unlocked above.
@@ -2060,7 +2061,7 @@ func (b *LocalBackend) setControlClientStatusLocked(c controlclient.Client, st c
 			b.MagicConn().SetDERPMap(st.NetMap.DERPMap)
 		}
 
-		b.MagicConn().SetOnlyTCP443(st.NetMap.HasCap(tailcfg.NodeAttrOnlyTCP443))
+		b.MagicConn().SetOnlyTCP443(st.NetMap.HasCap(nodecap.OnlyTCP443))
 
 		// Update our cached DERP map
 		dnsfallback.UpdateCache(st.NetMap.DERPMap, b.logf)
@@ -2544,7 +2545,7 @@ func (b *LocalBackend) UpdateNetmapDelta(muts []netmap.NodeMutation) (handled bo
 	// Note we do this AFTER the updates are applied in the nodeBackend, so that
 	// we can get its updated views to put back into the cache.
 	if buildfeatures.HasCacheNetMap &&
-		cn.SelfHasCap(tailcfg.NodeAttrCacheNetworkMaps) &&
+		cn.SelfHasCap(nodecap.CacheNetworkMaps) &&
 		envknob.BoolDefaultTrue("TS_USE_CACHED_NETMAP") {
 
 		var peersToUpdate []tailcfg.NodeView
@@ -3289,7 +3290,7 @@ func addServiceIPs(localNetsB *netipx.IPSetBuilder, selfNode tailcfg.NodeView) e
 		return nil
 	}
 
-	serviceMap, err := tailcfg.UnmarshalNodeCapViewJSON[tailcfg.ServiceIPMappings](selfNode.CapMap(), tailcfg.NodeAttrServiceHost)
+	serviceMap, err := tailcfg.UnmarshalNodeCapViewJSON[tailcfg.ServiceIPMappings](selfNode.CapMap(), nodecap.ServiceHost)
 	if err != nil {
 		return err
 	}
@@ -4988,7 +4989,7 @@ func (b *LocalBackend) checkSSHPrefsLocked(p *ipn.Prefs) error {
 		return nil
 	}
 	// Assume that we do have the SSH capability if don't have a netmap yet.
-	if !b.currentNode().SelfHasCapOr(tailcfg.CapabilitySSH, true) {
+	if !b.currentNode().SelfHasCapOr(nodecap.SSH, true) {
 		if b.isDefaultServerLocked() {
 			return errors.New("Unable to enable local Tailscale SSH server; not enabled on Tailnet. See https://tailscale.com/s/ssh")
 		}
@@ -5013,7 +5014,7 @@ func (b *LocalBackend) sshOnButUnusableHealthCheckMessageLocked() (healthMessage
 	}
 	isDefault := b.isDefaultServerLocked()
 
-	if !nm.HasCap(tailcfg.CapabilityAdmin) {
+	if !nm.HasCap(nodecap.Admin) {
 		return healthmsg.TailscaleSSHOnBut + "access controls don't allow anyone to access this device. Ask your admin to update your tailnet's ACLs to allow access."
 	}
 	if !isDefault {
@@ -6063,7 +6064,7 @@ func (b *LocalBackend) authReconfigLocked() {
 
 	prefs := b.pm.CurrentPrefs()
 	hasPAC := b.interfaceState.HasPAC()
-	disableSubnetsIfPAC := cn.SelfHasCap(tailcfg.NodeAttrDisableSubnetsIfPAC)
+	disableSubnetsIfPAC := cn.SelfHasCap(nodecap.DisableSubnetsIfPAC)
 	dohURL, dohURLOK := cn.exitNodeCanProxyDNS(prefs.ExitNodeID())
 	dcfg := cn.dnsConfigForNetmap(prefs, b.keyExpired, cmp.Or(b.goos, runtime.GOOS))
 	// If the current node is an app connector, ensure the app connector machine is started
@@ -6529,7 +6530,7 @@ func (b *LocalBackend) routerConfigLocked(cfg *wgcfg.Config, prefs ipn.PrefsView
 		NetfilterMode:       prefs.NetfilterMode(),
 		Routes:              b.currentNode().osRoutes(),
 		NetfilterKind:       netfilterKind,
-		RemoveCGNATDropRule: nm.HasCap(tailcfg.NodeAttrDisableLinuxCGNATDropRule),
+		RemoveCGNATDropRule: nm.HasCap(nodecap.DisableLinuxCGNATDropRule),
 	}
 
 	if buildfeatures.HasSynology && distro.Get() == distro.Synology {
@@ -7012,10 +7013,10 @@ func (b *LocalBackend) ShouldExposeRemoteWebClient() bool {
 // if the caller has no netmap.
 //
 // b.mu must be held.
-func (b *LocalBackend) setWebClientAtomicBoolLocked(caps set.Set[tailcfg.NodeCapability]) {
+func (b *LocalBackend) setWebClientAtomicBoolLocked(caps set.Set[nodecap.Cap]) {
 	syncs.RequiresMutex(&b.mu)
 
-	shouldRun := !caps.Contains(tailcfg.NodeAttrDisableWebClient)
+	shouldRun := !caps.Contains(nodecap.DisableWebClient)
 	wasRunning := b.webClientAtomicBool.Swap(shouldRun)
 	if wasRunning && !shouldRun {
 		b.goTracker.Go(b.webClientShutdown) // stop web client
@@ -7326,9 +7327,9 @@ func (b *LocalBackend) setNetMapLocked(nm *netmap.NetworkMap) {
 	}
 
 	if runtime.GOOS == "linux" && buildfeatures.HasOSRouter {
-		if nm.HasCap(tailcfg.NodeAttrLinuxMustUseIPTables) {
+		if nm.HasCap(nodecap.LinuxMustUseIPTables) {
 			b.capForcedNetfilter = "iptables"
-		} else if nm.HasCap(tailcfg.NodeAttrLinuxMustUseNfTables) {
+		} else if nm.HasCap(nodecap.LinuxMustUseNfTables) {
 			b.capForcedNetfilter = "nftables"
 		} else {
 			b.capForcedNetfilter = "" // empty string means client can auto-detect
@@ -7344,7 +7345,7 @@ func (b *LocalBackend) setNetMapLocked(nm *netmap.NetworkMap) {
 	}
 
 	if buildfeatures.HasDebug {
-		var caps set.Set[tailcfg.NodeCapability]
+		var caps set.Set[nodecap.Cap]
 		if nm != nil {
 			caps = nm.AllCaps
 		}
@@ -7352,12 +7353,12 @@ func (b *LocalBackend) setNetMapLocked(nm *netmap.NetworkMap) {
 	}
 
 	// See the netns package for documentation on what these capability do.
-	netns.SetBindToInterfaceByRoute(b.logf, nm.HasCap(tailcfg.CapabilityBindToInterfaceByRoute))
+	netns.SetBindToInterfaceByRoute(b.logf, nm.HasCap(nodecap.BindToInterfaceByRoute))
 	if runtime.GOOS == "android" {
-		netns.SetDisableAndroidBindToActiveNetwork(b.logf, nm.HasCap(tailcfg.NodeAttrDisableAndroidBindToActiveNetwork))
+		netns.SetDisableAndroidBindToActiveNetwork(b.logf, nm.HasCap(nodecap.DisableAndroidBindToActiveNetwork))
 	}
-	netns.SetDisableBindConnToInterface(b.logf, nm.HasCap(tailcfg.CapabilityDebugDisableBindConnToInterface))
-	netns.SetDisableBindConnToInterfaceAppleExt(b.logf, nm.HasCap(tailcfg.CapabilityDebugDisableBindConnToInterfaceAppleExt))
+	netns.SetDisableBindConnToInterface(b.logf, nm.HasCap(nodecap.DebugDisableBindConnToInterface))
+	netns.SetDisableBindConnToInterfaceAppleExt(b.logf, nm.HasCap(nodecap.DebugDisableBindConnToInterfaceAppleExt))
 
 	b.setTCPPortsInterceptedFromNetmapAndPrefsLocked(b.pm.CurrentPrefs())
 	if buildfeatures.HasServe {
@@ -7428,7 +7429,7 @@ func (b *LocalBackend) setNetMapLocked(nm *netmap.NetworkMap) {
 	// not being updated (because of the envknob) and could be read back when
 	// the node starts up.
 	if nm != nil {
-		if b.currentNode().SelfHasCap(tailcfg.NodeAttrCacheNetworkMaps) && envknob.BoolDefaultTrue("TS_USE_CACHED_NETMAP") {
+		if b.currentNode().SelfHasCap(nodecap.CacheNetworkMaps) && envknob.BoolDefaultTrue("TS_USE_CACHED_NETMAP") {
 			if err := b.writeNetmapToDiskLockedWithPeers(nm); err != nil {
 				b.logf("write netmap to cache: %v", err)
 			}
@@ -7485,10 +7486,10 @@ func roundTraffic(bytes int64) float64 {
 
 // setDebugLogsByCapabilityLocked sets debug logging based on the self node's
 // capabilities. caps may be nil if the caller has no netmap.
-func (b *LocalBackend) setDebugLogsByCapabilityLocked(caps set.Set[tailcfg.NodeCapability]) {
+func (b *LocalBackend) setDebugLogsByCapabilityLocked(caps set.Set[nodecap.Cap]) {
 	// These are sufficiently cheap (atomic bools) that we don't need to
 	// store state and compare.
-	if caps.Contains(tailcfg.CapabilityDebugTSDNSResolution) {
+	if caps.Contains(nodecap.DebugTSDNSResolution) {
 		dnscache.SetDebugLoggingEnabled(true)
 	} else {
 		dnscache.SetDebugLoggingEnabled(false)
@@ -8054,7 +8055,7 @@ func (s netLogNodeSource) NetLogIDs() (nodeID, domainID logid.PrivateID, logExit
 	if nm == nil || !nm.SelfNode.Valid() {
 		return
 	}
-	if !nm.SelfNode.HasCap(tailcfg.CapabilityDataPlaneAuditLogs) {
+	if !nm.SelfNode.HasCap(nodecap.DataPlaneAuditLogs) {
 		return
 	}
 	if nm.SelfNode.DataPlaneAuditLogID() == "" || nm.DomainAuditLogID == "" {
@@ -8071,7 +8072,7 @@ func (s netLogNodeSource) NetLogIDs() (nodeID, domainID logid.PrivateID, logExit
 	if errNode != nil || errDomain != nil {
 		return logid.PrivateID{}, logid.PrivateID{}, false, false
 	}
-	return nodeID, domainID, nm.SelfNode.HasCap(tailcfg.NodeAttrLogExitFlows), true
+	return nodeID, domainID, nm.SelfNode.HasCap(nodecap.LogExitFlows), true
 }
 
 // Compile-time assertion that netLogNodeSource implements
@@ -8766,7 +8767,7 @@ func fillAllowedSuggestions(polc policyclient.Client) (set.Set[tailcfg.StableNod
 // Errors are always logged. Suggestions are logged if they defer from prevSuggestion.
 func suggestExitNode(preferredDERP int, regionLatency map[int]time.Duration, rp RouteCheckReport, nb *nodeBackend, prevSuggestion tailcfg.StableNodeID, selectRegion selectRegionFunc, selectNode selectNodeFunc, allowList set.Set[tailcfg.StableNodeID]) (res apitype.ExitNodeSuggestionResponse, err error) {
 	switch {
-	case nb.SelfHasCap(tailcfg.NodeAttrTrafficSteering):
+	case nb.SelfHasCap(nodecap.TrafficSteering):
 		// The traffic-steering feature flag is enabled on this tailnet.
 		res, err = suggestExitNodeUsingTrafficSteering(rp, nb, allowList)
 	default:
@@ -8815,7 +8816,7 @@ func suggestExitNodeUsingDERP(preferredRegionID int, regionLatency map[int]time.
 		if allowList != nil && !allowList.Contains(peer.StableID()) {
 			return false
 		}
-		return peer.CapMap().Contains(tailcfg.NodeAttrSuggestExitNode) && tsaddr.ContainsExitRoutes(peer.AllowedIPs())
+		return peer.CapMap().Contains(nodecap.SuggestExitNode) && tsaddr.ContainsExitRoutes(peer.AllowedIPs())
 	})
 	if len(candidates) == 0 {
 		return res, nil
@@ -8948,7 +8949,7 @@ func suggestExitNodeUsingTrafficSteering(rp RouteCheckReport, nb *nodeBackend, a
 		return apitype.ExitNodeSuggestionResponse{}, ErrNoNetMap
 	}
 
-	if !nb.SelfHasCap(tailcfg.NodeAttrTrafficSteering) {
+	if !nb.SelfHasCap(nodecap.TrafficSteering) {
 		panic("missing traffic-steering capability")
 	}
 
@@ -8962,7 +8963,7 @@ func suggestExitNodeUsingTrafficSteering(rp RouteCheckReport, nb *nodeBackend, a
 		if allowed != nil && !allowed.Contains(p.StableID()) {
 			return false
 		}
-		if !p.CapMap().Contains(tailcfg.NodeAttrSuggestExitNode) {
+		if !p.CapMap().Contains(nodecap.SuggestExitNode) {
 			return false
 		}
 		if !tsaddr.ContainsExitRoutes(p.AllowedIPs()) {
@@ -9124,7 +9125,7 @@ func isAllowedAutoExitNodeID(polc policyclient.Client, exitNodeID tailcfg.Stable
 //
 // TODO(bradfitz): optimize this later if/when it matters.
 // TODO(nickkhyl): move this into [nodeBackend] along with [LocalBackend.updateFilterLocked].
-func (b *LocalBackend) srcIPHasCapForFilter(srcIP netip.Addr, cap tailcfg.NodeCapability) bool {
+func (b *LocalBackend) srcIPHasCapForFilter(srcIP netip.Addr, cap nodecap.Cap) bool {
 	if cap == "" {
 		// Shouldn't happen, but just in case.
 		// But the empty cap also shouldn't be found in Node.CapMap.
