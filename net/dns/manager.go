@@ -378,10 +378,11 @@ func (m *Manager) compileConfig(cfg Config) (rcfg resolver.Config, ocfg OSConfig
 	// workaround.
 	isWindows := m.goos == "windows"
 	isIOS := m.goos == "ios"
+	isSandboxedMac := m.goos == "darwin" && isSandboxedMacOS()
 	supportsSplitDNS := m.os.SupportsSplitDNS()
 	// Sandboxed macOS builds use NetworkExtension DNS settings, not
 	// tailscaled's /etc/resolver configurator, so keep the Apple workaround.
-	appleSplitDNSWorkaround := isIOS || (m.goos == "darwin" && isSandboxedMacOS())
+	appleSplitDNSWorkaround := isIOS || isSandboxedMac
 	if supportsSplitDNS && !isWindows && !appleSplitDNSWorkaround {
 		if srs := toIPsOnly(cfg.singleResolverSet()); len(srs) > 0 {
 			// Split DNS configuration requested, where all split domains
@@ -426,6 +427,16 @@ func (m *Manager) compileConfig(cfg Config) (rcfg resolver.Config, ocfg OSConfig
 		return resolver.Config{}, OSConfig{}, err
 	}
 	m.health.SetHealthy(osConfigurationReadWarnable)
+
+	// On sandboxed macOS only, scope quad-100 to its match domains (plus any
+	// uncovered Host records only it can answer) so public names fall through to
+	// the OS default resolver, e.g. a DoH profile, instead of being shadowed.
+	// Skipped without a usable base resolver or when MagicDNSHostsUnrouted holds
+	// non-enumerable records, where quad-100 must stay primary.
+	if supportsSplitDNS && isSandboxedMac && len(base.Nameservers) > 0 && !cfg.MagicDNSHostsUnrouted {
+		ocfg.MatchDomains = append(cfg.matchDomains(), cfg.hostsWithoutSplitDNSRoutes()...)
+		return rcfg, ocfg, nil
+	}
 
 	// On iOS only (for now), check if all route names point to resources inside the tailnet.
 	// If so, we can set those names as MatchDomains to enable a split DNS configuration
