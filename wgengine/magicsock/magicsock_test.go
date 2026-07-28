@@ -126,7 +126,7 @@ func runDERPAndStun(t *testing.T, logf logger.Logf, ln nettype.PacketListener, s
 	stunAddr, stunCleanup := stuntest.ServeWithPacketListener(t, ln)
 
 	m := &tailcfg.DERPMap{
-		Regions: map[int]*tailcfg.DERPRegion{
+		Regions: map[tailcfg.DERPRegionID]*tailcfg.DERPRegion{
 			1: {
 				RegionID:   1,
 				RegionCode: "test",
@@ -556,7 +556,7 @@ func TestResetNetInfoLast(t *testing.T) {
 		got <- ni
 	})
 
-	wantCall := func(why string, wantDERP int) {
+	wantCall := func(why string, wantDERP tailcfg.DERPRegionID) {
 		t.Helper()
 		select {
 		case ni := <-got:
@@ -601,7 +601,7 @@ func TestPickDERPFallback(t *testing.T) {
 
 	c := newConn(t.Logf)
 	dm := &tailcfg.DERPMap{
-		Regions: map[int]*tailcfg.DERPRegion{
+		Regions: map[tailcfg.DERPRegionID]*tailcfg.DERPRegion{
 			1: {},
 			2: {},
 			3: {},
@@ -628,7 +628,7 @@ func TestPickDERPFallback(t *testing.T) {
 
 	// Test that the pointer value of c is blended in and
 	// distribution over nodes works.
-	got := map[int]int{}
+	got := map[tailcfg.DERPRegionID]int{}
 	for range 50 {
 		c = newConn(t.Logf)
 		c.derpMap = dm
@@ -3266,7 +3266,7 @@ func TestAddrForPingSizeLocked(t *testing.T) {
 
 func TestMaybeSetNearestDERP(t *testing.T) {
 	derpMap := &tailcfg.DERPMap{
-		Regions: map[int]*tailcfg.DERPRegion{
+		Regions: map[tailcfg.DERPRegionID]*tailcfg.DERPRegion{
 			1: {
 				RegionID:   1,
 				RegionCode: "test",
@@ -3310,18 +3310,18 @@ func TestMaybeSetNearestDERP(t *testing.T) {
 	}
 
 	// Ensure that our fallback code always picks a deterministic value.
-	tstest.Replace(t, &pickDERPFallbackForTests, func() int { return 31 })
+	tstest.Replace(t, &pickDERPFallbackForTests, func() tailcfg.DERPRegionID { return 31 })
 
 	// Actually test this code path.
 	tstest.Replace(t, &checkControlHealthDuringNearestDERPInTests, true)
 
 	testCases := []struct {
 		name               string
-		old                int
-		reportDERP         int
+		old                tailcfg.DERPRegionID
+		reportDERP         tailcfg.DERPRegionID
 		connectedToControl bool
 		force              bool
-		want               int
+		want               tailcfg.DERPRegionID
 	}{
 		{
 			name:               "connected_with_report_derp",

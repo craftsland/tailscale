@@ -99,7 +99,7 @@ var _NodeCloneNeedsRegeneration = Node(struct {
 	AllowedIPs                    []netip.Prefix
 	Endpoints                     []netip.AddrPort
 	LegacyDERPString              string
-	HomeDERP                      int
+	HomeDERP                      DERPRegionID
 	Hostinfo                      HostinfoView
 	Created                       time.Time
 	Cap                           CapabilityVersion
@@ -216,7 +216,7 @@ var _NetInfoCloneNeedsRegeneration = NetInfo(struct {
 	UPnP                  opt.Bool
 	PMP                   opt.Bool
 	PCP                   opt.Bool
-	PreferredDERP         int
+	PreferredDERP         DERPRegionID
 	LinkType              string
 	DERPLatency           map[string]float64
 	FirewallMode          string
@@ -407,7 +407,7 @@ func (src *DERPHomeParams) Clone() *DERPHomeParams {
 
 // A compilation failure here means this code must be regenerated, with the command at the top of this file.
 var _DERPHomeParamsCloneNeedsRegeneration = DERPHomeParams(struct {
-	RegionScore map[int]float64
+	RegionScore map[DERPRegionID]float64
 }{})
 
 // Clone makes a deep copy of DERPRegion.
@@ -433,7 +433,7 @@ func (src *DERPRegion) Clone() *DERPRegion {
 
 // A compilation failure here means this code must be regenerated, with the command at the top of this file.
 var _DERPRegionCloneNeedsRegeneration = DERPRegion(struct {
-	RegionID        int
+	RegionID        DERPRegionID
 	RegionCode      string
 	RegionName      string
 	Latitude        float64
@@ -453,7 +453,7 @@ func (src *DERPMap) Clone() *DERPMap {
 	*dst = *src
 	dst.HomeParams = src.HomeParams.Clone()
 	if dst.Regions != nil {
-		dst.Regions = map[int]*DERPRegion{}
+		dst.Regions = map[DERPRegionID]*DERPRegion{}
 		for k, v := range src.Regions {
 			if v == nil {
 				dst.Regions[k] = nil
@@ -468,7 +468,7 @@ func (src *DERPMap) Clone() *DERPMap {
 // A compilation failure here means this code must be regenerated, with the command at the top of this file.
 var _DERPMapCloneNeedsRegeneration = DERPMap(struct {
 	HomeParams         *DERPHomeParams
-	Regions            map[int]*DERPRegion
+	Regions            map[DERPRegionID]*DERPRegion
 	OmitDefaultRegions bool
 }{})
 
@@ -486,7 +486,7 @@ func (src *DERPNode) Clone() *DERPNode {
 // A compilation failure here means this code must be regenerated, with the command at the top of this file.
 var _DERPNodeCloneNeedsRegeneration = DERPNode(struct {
 	Name             string
-	RegionID         int
+	RegionID         DERPRegionID
 	HostName         string
 	CertName         string
 	IPv4             string
