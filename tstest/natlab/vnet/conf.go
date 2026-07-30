@@ -391,6 +391,7 @@ type Network struct {
 
 	latency  time.Duration // latency applied to interface writes
 	lossRate float64       // chance of packet loss (0.0 to 1.0)
+	mtu      int           // IP MTU of the router's WAN link; 0 means unlimited
 
 	// ...
 	err error // carried error
@@ -399,6 +400,26 @@ type Network struct {
 // SetLatency sets the simulated network latency for this network.
 func (n *Network) SetLatency(d time.Duration) {
 	n.latency = d
+}
+
+// SetMTU sets the IP MTU of this network's WAN link: the largest IP packet, in
+// bytes, that the router will forward to or from the simulated internet. An
+// mtu of 0 (the default) means unlimited.
+//
+// Oversized packets are dropped without an ICMP "fragmentation needed" or
+// "packet too big" reply, and without fragmenting them. That models a path
+// whose MTU cannot be discovered — either because a middlebox swallows the
+// ICMP, or because the sender set DF and nothing told it to back off. It is
+// the pessimal case for a sender that assumes an MTU rather than probing it.
+//
+// Only forwarded node traffic crossing the router's WAN link is constrained.
+// Packets between two nodes on the same LAN segment don't traverse the router,
+// and traffic the router itself originates from its netstack (the fake control
+// plane, DERP, DNS, file servers) is delivered straight to the LAN; neither is
+// affected. So a test can constrain the tailnet underlay between two nodes
+// while leaving each node's path to control and DERP at full size.
+func (n *Network) SetMTU(mtu int) {
+	n.mtu = mtu
 }
 
 // SetPacketLoss sets the packet loss rate for this network 0.0 (no loss) to 1.0 (total loss).
@@ -510,6 +531,7 @@ func (s *Server) initFromConfig(c *Config) error {
 			breakWAN4:  conf.breakWAN4,
 			latency:    conf.latency,
 			lossRate:   conf.lossRate,
+			mtu:        conf.mtu,
 			nodesByIP4: map[netip.Addr]*node{},
 			nodesByMAC: map[MAC]*node{},
 			logf:       logger.WithPrefix(s.logf, fmt.Sprintf("[net-%v] ", conf.mac)),
